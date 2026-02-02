@@ -1,1 +1,3 @@
-- ECS 152 HW 1
+# Project 1 - Sender
+
+> ECS 152 Homework
