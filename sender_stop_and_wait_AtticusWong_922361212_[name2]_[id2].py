@@ -33,36 +33,29 @@ def test_socket_connection():
 def solve():
     stored_data = []
     contents = open_file()
-    for i in range(0, len(contents), 1024):
-        stored_data.append(contents[i:i+1024])
-
+    for i in range(0, len(contents), 1020):  
+        stored_data.append(contents[i:i+1020])
     print(len(stored_data))
-
     start = time.time()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("localhost", SENDER_PORT))
-
+    sock.settimeout(2.0)  # Add: timeout for recvfrom
     idx = 0
-    while idx < 10:
+    while idx < len(contents):
         seq_id = idx.to_bytes(4, byteorder='big')
-        packet = seq_id + stored_data[idx]
-
-        # start after you send
+        packet = seq_id + stored_data[idx // 1020]
         sock.sendto(packet, ("localhost", RECEIVER_PORT))
-
-
         try:
             data, addr = sock.recvfrom(1028) 
-            print(f"Received packet from {addr}")
-            print(f"Message - seq_id: {int.from_bytes(data[:4], byteorder='big')}")
-        except:
+            ack_id = int.from_bytes(data[:4], byteorder='big')
+            print(f"Received ACK from {addr}")
+            print(f"ACK ID (next expected byte): {ack_id}")
+        except socket.timeout:  
             time.sleep(2)
-        idx += 1
+        idx += 1020
         
-
-    # stop after you receive
     end = time.time()
-    print(f"Total time to send all packets: f{end - start}")
+    print(f"Total time to send all packets: {end - start}")
 
 if __name__ == "__main__":
     solve()
