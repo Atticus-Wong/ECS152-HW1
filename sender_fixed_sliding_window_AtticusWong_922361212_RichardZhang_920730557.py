@@ -1,5 +1,6 @@
 import time
 import socket
+from collections import defaultdict
 
 
 HOST = "127.0.0.1"
@@ -38,6 +39,7 @@ def solve():
     num_timeouts = 0
     num_fast_retransmits = 0
     num_cum_dup_acks = 0
+    fast_retransmit_freq_map = defaultdict(int) #seq id -> freq
 
     while last_received_seq < len(contents):
         while (last_sent_seq - last_received_seq) // MESSAGE_SIZE < WINDOW_SIZE and last_sent_seq < len(contents):
@@ -67,6 +69,7 @@ def solve():
                     packet = seq_id + stored_data[ack_id // MESSAGE_SIZE]
                     sock.sendto(packet, ("localhost", RECEIVER_PORT))
                     num_fast_retransmits += 1
+                    fast_retransmit_freq_map[ack_id  // MESSAGE_SIZE] += 1
                     dup_acks = 0
             elif ack_id > last_received_seq:
                 dup_acks = 0
@@ -120,6 +123,8 @@ def solve():
     print("Number of timeouts:", num_timeouts)
     print("Number of cumulative duplicate acks:", num_cum_dup_acks)
     print("Number of fast retransmits:", num_fast_retransmits)
+    if fast_retransmit_freq_map:
+        print("Frequency map of fast retransmits:", fast_retransmit_freq_map)
 
 
 if __name__ == "__main__":
