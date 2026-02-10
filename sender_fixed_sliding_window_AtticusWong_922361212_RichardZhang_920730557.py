@@ -30,25 +30,47 @@ def solve():
 
     last_sent = 0
     last_received = 0
+    received_packets = {} #id -> time received
+    sent_packets = {} #id -> time received
+
+    dup_acks = 0
+
+
     while last_received < len(contents):
         while (last_sent - last_received) // MESSAGE_SIZE < WINDOW_SIZE and last_sent < len(contents):
             seq_id = last_sent.to_bytes(4, byteorder='big')
             packet = seq_id + stored_data[last_sent // MESSAGE_SIZE]
             sock.sendto(packet, ("localhost", RECEIVER_PORT))
             #print(f"Sending seq id {last_sent}")
-            print(f"Sent {last_sent//MESSAGE_SIZE}th packet")
+            #print(f"Sent {last_sent//MESSAGE_SIZE}th packet")
             last_sent += MESSAGE_SIZE
+            sent_packets[last_sent // MESSAGE_SIZE] = time.time()
         try:
             data, addr = sock.recvfrom(1028)
             ack_id = int.from_bytes(data[:4], byteorder='big')
-            #print(f"ACK ID (next expected byte): {ack_id}")
-            if ack_id > last_received:
+            received_packets[ack_id // MESSAGE_SIZE] = time.time()
+            print(f"ack id: {ack_id//MESSAGE_SIZE}")
+            print(f"last_received: {last_received//MESSAGE_SIZE}\n")
+            if ack_id == last_received:
+                print("X")
+                dup_acks += 1
+                if dup_acks == 3:
+                    #Fast retransmit
+                    seq_id = ack_id.to_bytes(4, byteorder='big')
+                    packet = seq_id + stored_data[ack_id // MESSAGE_SIZE]
+                    sock.sendto(packet, ("localhost", RECEIVER_PORT))
+                    #print(f"Fast retransmit packet {ack_id // MESSAGE_SIZE} (dup ACK {ack_id})")
+            elif ack_id > last_received:
+                dup_acks = 0
+                # Cumulative ACK: receiver advanced past expected, advance window
                 last_received = ack_id
-                print(f"Received {last_received//MESSAGE_SIZE}th packet")
+                #print(f"Received cumulative ACK {last_received//MESSAGE_SIZE}th packet")
         except socket.timeout:  
             #time.sleep(2)
             last_sent = last_received
             print("TIMEOUT")
+
+        
 
         """
         1 2 3 4 5
@@ -56,7 +78,6 @@ def solve():
             3 4 5
             3 
         """
-
         
 
 if __name__ == "__main__":
