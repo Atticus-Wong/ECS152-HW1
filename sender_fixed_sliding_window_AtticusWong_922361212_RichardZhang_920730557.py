@@ -29,8 +29,8 @@ def solve():
     sock.bind(("localhost", SENDER_PORT))
     sock.settimeout(1)
 
-    last_sent_seq = 0
-    last_received_seq = 0
+    next_send_seq = 0
+    last_ack_seq = 0
     received_acks = {} #ack -> time received
     sent_packets = {} #packet -> time received
 
@@ -41,57 +41,62 @@ def solve():
     num_cum_dup_acks = 0
     fast_retransmit_freq_map = defaultdict(int) #seq id -> freq
 
-    while last_received_seq < len(contents):
-        while (last_sent_seq - last_received_seq) // MESSAGE_SIZE < WINDOW_SIZE and last_sent_seq < len(contents):
-            seq_id = last_sent_seq.to_bytes(4, byteorder='big')
-            packet = seq_id + stored_data[last_sent_seq // MESSAGE_SIZE]
+    while last_ack_seq < len(contents):
+        while (next_send_seq - last_ack_seq) // MESSAGE_SIZE < WINDOW_SIZE and next_send_seq < len(contents):
+            seq_id = next_send_seq.to_bytes(4, byteorder='big')
+            packet = seq_id + stored_data[next_send_seq // MESSAGE_SIZE]
             sock.sendto(packet, ("localhost", RECEIVER_PORT))
-            print(f"Sent {last_sent_seq//MESSAGE_SIZE}th packet")
-            if last_sent_seq not in sent_packets:
-                sent_packets[last_sent_seq] = time.time()
-            last_sent_seq += MESSAGE_SIZE
+            #print(f"Sent {next_send_seq//MESSAGE_SIZE}th packet")
+            if next_send_seq not in sent_packets:
+                sent_packets[next_send_seq] = time.time()
+            next_send_seq += MESSAGE_SIZE
         try:
             data, addr = sock.recvfrom(PACKET_SIZE)
             ack_id = int.from_bytes(data[:4], byteorder='big')
             if ack_id not in received_acks:
                 received_acks[ack_id] = time.time()
 
-            #print(f"ack id: {ack_id//MESSAGE_SIZE}")
-            #print(f"last_received_seq: {last_received_seq//MESSAGE_SIZE}\n")
-            if ack_id == last_received_seq:
-                print(f"DUP ACK")
+            if ack_id == last_ack_seq:
                 num_cum_dup_acks += 1
                 dup_acks += 1
+
                 if dup_acks == 3:
                     #Fast retransmit
-                    print(f"FAST RETRANSMIT {ack_id // MESSAGE_SIZE}th packet")
-                    seq_id = ack_id.to_bytes(4, byteorder='big')
-                    packet = seq_id + stored_data[ack_id // MESSAGE_SIZE]
+                    #print(f"FAST RETRANSMIT {last_ack_seq // MESSAGE_SIZE}th packet")
+                    seq_id = last_ack_seq.to_bytes(4, byteorder='big')
+                    packet = seq_id + stored_data[last_ack_seq // MESSAGE_SIZE]
                     sock.sendto(packet, ("localhost", RECEIVER_PORT))
                     num_fast_retransmits += 1
-                    fast_retransmit_freq_map[ack_id  // MESSAGE_SIZE] += 1
-                    dup_acks = 0
-            elif ack_id > last_received_seq:
+                    fast_retransmit_freq_map[last_ack_seq  // MESSAGE_SIZE] += 1
+            elif ack_id > last_ack_seq:
                 dup_acks = 0
                 # Cumulative ACK: receiver advanced past expected, advance window
-                last_received_seq = ack_id
-                print(f"Received ACK {last_received_seq//MESSAGE_SIZE}th packet")
+                last_ack_seq = ack_id
+                #print(f"Received ACK up to {last_ack_seq//MESSAGE_SIZE}th packet")
         except socket.timeout:
-            last_sent_seq = last_received_seq
             dup_acks = 0
             num_timeouts += 1
-            print("TIMEOUT")
+            #print("TIMEOUT. Going back N")
+
+            for seq in range(last_ack_seq, min(last_ack_seq + (WINDOW_SIZE * MESSAGE_SIZE), len(contents)), MESSAGE_SIZE):
+                seq_id = seq.to_bytes(4, byteorder="big")
+                packet = seq_id + stored_data[seq // MESSAGE_SIZE]
+                sock.sendto(packet, ("localhost", RECEIVER_PORT))
+                #print(f"Sent {seq//MESSAGE_SIZE}th packet (after timeout)")
+            
+            next_send_seq = min(last_ack_seq + (WINDOW_SIZE * MESSAGE_SIZE), len(contents))
+
+
 
     end = time.time()
-    print("entering termination protocol")
-    empty_message = last_received_seq.to_bytes(4, byteorder="big")
+    print("\nentering termination protocol")
+    empty_message = last_ack_seq.to_bytes(4, byteorder="big")
     sock.sendto(empty_message, ("localhost", RECEIVER_PORT))
 
     while True:
         try:
             data, addr = sock.recvfrom(PACKET_SIZE)
             msg = data[4:]
-            print(msg)
             if b"fin" in msg:
                 break
         except socket.timeout:
@@ -119,12 +124,12 @@ def solve():
     print("Final Score:", 0.3*throughput/1000 + 0.7/per_pkt_delay)
 
 
-    print("\nADDITIONAL STATS:")
-    print("Number of timeouts:", num_timeouts)
-    print("Number of cumulative duplicate acks:", num_cum_dup_acks)
-    print("Number of fast retransmits:", num_fast_retransmits)
-    if fast_retransmit_freq_map:
-        print("Frequency map of fast retransmits:", fast_retransmit_freq_map)
+    #print("\nADDITIONAL STATS:")
+    #print("Number of timeouts:", num_timeouts)
+    #print("Number of cumulative duplicate acks:", num_cum_dup_acks)
+    #print("Number of fast retransmits:", num_fast_retransmits)
+    #if fast_retransmit_freq_map:
+    #    print("Frequency map of fast retransmits:", fast_retransmit_freq_map)
 
 
 if __name__ == "__main__":
