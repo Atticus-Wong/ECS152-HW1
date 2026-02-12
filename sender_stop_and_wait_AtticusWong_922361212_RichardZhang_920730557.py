@@ -10,26 +10,13 @@ SENDER_PORT = 5000
 PACKET_SIZE = 1024
 SEQ_ID_SIZE = 4
 
+TIMEOUT = 3
+
 
 def open_file():
     with open("starter/docker/file.mp3", "rb") as f:
         contents = f.read()
         return contents
-
-
-def test_socket_connection():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("localhost", SENDER_PORT))
-
-    m = b"hello world"
-
-    sock.sendto(m, ("localhost", RECEIVER_PORT))
-
-    data, addr = sock.recvfrom(1028)
-
-    print(f"Received packet from {addr}")
-    # Decode the data (assuming it's a UTF-8 string)
-    print(f"Message: {data.decode('utf-8')}")
 
 
 def solve():
@@ -41,27 +28,27 @@ def solve():
     start = time.time()  # throughput timer
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("localhost", SENDER_PORT))
-    sock.settimeout(3)
+    sock.settimeout(TIMEOUT)
     idx = 0
     packetDelays = []
     while idx < len(contents):
         seq_id = idx.to_bytes(4, byteorder="big")
         packet = seq_id + stored_data[idx // 1020]
+        sock.sendto(packet, ("localhost", RECEIVER_PORT))
         packetStart = time.time()
 
-        while True:
-            sock.sendto(packet, ("localhost", RECEIVER_PORT))
+        while True: # loop that runs until the packet in flight is received
             try:
-                data, addr = sock.recvfrom(1028)
+                data, addr = sock.recvfrom(PACKET_SIZE)
                 packetStop = time.time()
                 ack_id = int.from_bytes(data[:4], byteorder="big")
                 # print(f"Received ACK from {addr}")
                 print(f"ACK ID (next expected byte): {ack_id}")
                 packetDelays.append(packetStop - packetStart)
-                idx = ack_id
+                idx = ack_id # advance index to next packet
                 break
-            except socket.timeout:
-                continue
+            except socket.timeout: # on timeout, resend packet immediately
+                sock.sendto(packet, ("localhost", RECEIVER_PORT))
 
     end = time.time()  # throughput timer
 
@@ -70,7 +57,7 @@ def solve():
 
     while True:
         try:
-            data, addr = sock.recvfrom(1028)
+            data, addr = sock.recvfrom(PACKET_SIZE)
             msg = data[4:]
             # print(msg)
             if b"fin" in msg:
