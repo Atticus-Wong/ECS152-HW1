@@ -13,7 +13,7 @@ MESSAGE_SIZE = 1020
 SEQ_ID_SIZE = 4
 
 WINDOW_SIZE = 100
-TIMEOUT = 0.5
+TIMEOUT = 3
 
 def open_file():
     with open("starter/docker/file.mp3", "rb") as f:
@@ -36,15 +36,12 @@ def solve():
     sent_time = {} #packet id -> time sent, only first send
     outstanding_packets = {} #packet id in flight -> time sent, latest send
 
-
-    num_timeouts = 0
-
     while last_ack_seq < len(contents):
         while (next_send_seq - last_ack_seq) // MESSAGE_SIZE < WINDOW_SIZE and next_send_seq < len(contents):
+            # Send as many packets as the window allows
             seq_bytes = next_send_seq.to_bytes(4, byteorder="big")
             packet = seq_bytes + stored_data[next_send_seq // MESSAGE_SIZE]
             sock.sendto(packet, ("localhost", RECEIVER_PORT))
-            print(f"Sent {next_send_seq//MESSAGE_SIZE}th packet")
             if next_send_seq not in sent_time:
                 sent_time[next_send_seq] = time.time()
             outstanding_packets[next_send_seq] = time.time()
@@ -59,9 +56,9 @@ def solve():
                     ack_time[seq] = time.time()
                     del outstanding_packets[seq] # delete this packet since it is no longer in flight
                 last_ack_seq = ack_id
-                print(f"Received ACK up to {last_ack_seq//MESSAGE_SIZE}th packet")
         except socket.timeout: 
             pass
+
 
         # For every packet in current window, check if it
         # has been in flight for longer than TIMEOUT.
@@ -69,14 +66,13 @@ def solve():
         now = time.time()
         for seq in range(last_ack_seq, next_send_seq, MESSAGE_SIZE):
             if seq in outstanding_packets and now - outstanding_packets[seq] >= TIMEOUT:
-                num_timeouts += 1
                 seq_bytes = seq.to_bytes(4, byteorder="big")
                 packet = seq_bytes + stored_data[seq // MESSAGE_SIZE]
                 sock.sendto(packet, ("localhost", RECEIVER_PORT))
                 outstanding_packets[seq] = time.time() # refresh its timeout
 
+    # End the connection by sending an empty message, receive fin, and send finack
     end = time.time()
-    print("\nentering termination protocol")
     empty_message = last_ack_seq.to_bytes(4, byteorder="big")
     sock.sendto(empty_message, ("localhost", RECEIVER_PORT))
 
@@ -93,24 +89,18 @@ def solve():
     sock.sendto(finack, ("localhost", RECEIVER_PORT))
     sock.close()
 
-    sorted_acks = sorted(list(ack_time.keys()))
-
     #calculate per packet delays
     packet_delays = []
     for seq in sent_time:
         if seq in ack_time:
             packet_delays.append(ack_time[seq] - sent_time[seq])
         
-    
-
+    # print results
     throughput, per_pkt_delay = len(contents) / (end - start), sum(packet_delays) / len(packet_delays)
-    print("Throughput: ", throughput)
-    print("Per Packet Delay: ", per_pkt_delay)
-    print("Final Score:", 0.3*throughput/1000 + 0.7/per_pkt_delay)
-
-
-    #print("\nADDITIONAL STATS:")
-    #print("Number of timeouts:", num_timeouts)
+    final_score = 0.3*throughput/1000 + 0.7/per_pkt_delay
+    print(f"Throughput: {throughput:.7f}")
+    print(f"Per Packet Delay: {per_pkt_delay:.7f}")
+    print(f"Final Score: {final_score:.7f}")
 
 
 if __name__ == "__main__":
