@@ -37,31 +37,31 @@ def solve():
     contents = open_file()
     for i in range(0, len(contents), 1020):
         stored_data.append(contents[i : i + 1020])
-    print(len(stored_data))
+    # print(len(stored_data))
     start = time.time()  # throughput timer
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("localhost", SENDER_PORT))
-    sock.settimeout(0.2)
+    sock.settimeout(3)
     idx = 0
     packetDelays = []
     while idx < len(contents):
         seq_id = idx.to_bytes(4, byteorder="big")
         packet = seq_id + stored_data[idx // 1020]
         packetStart = time.time()
-        sock.sendto(
-            packet, ("localhost", RECEIVER_PORT)
-        )  # per packet delay timer starts here
-        try:
-            data, addr = sock.recvfrom(1028)
-            # per packet delay timer stops here
-            packetStop = time.time()
-            ack_id = int.from_bytes(data[:4], byteorder="big")
-            # print(f"Received ACK from {addr}")
-            print(f"ACK ID (next expected byte): {ack_id}")
-            packetDelays.append(packetStop - packetStart)
-            idx = ack_id
-        except socket.timeout:
-            pass
+
+        while True:
+            sock.sendto(packet, ("localhost", RECEIVER_PORT))
+            try:
+                data, addr = sock.recvfrom(1028)
+                packetStop = time.time()
+                ack_id = int.from_bytes(data[:4], byteorder="big")
+                # print(f"Received ACK from {addr}")
+                print(f"ACK ID (next expected byte): {ack_id}")
+                packetDelays.append(packetStop - packetStart)
+                idx = ack_id
+                break
+            except socket.timeout:
+                continue
 
     end = time.time()  # throughput timer
 
