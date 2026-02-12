@@ -1,7 +1,5 @@
 import time
 import socket
-from collections import defaultdict
-
 
 HOST = "127.0.0.1"
 
@@ -28,7 +26,7 @@ def solve():
     start = time.time() # throughput timer
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("localhost", SENDER_PORT))
-    sock.settimeout(0.1)
+    sock.settimeout(0.2) # The polling interval for detecting timeouts. Packet timeouts are determined with outstanding_packets dict
 
     next_send_seq = 0
     last_ack_seq = 0
@@ -47,7 +45,7 @@ def solve():
             outstanding_packets[next_send_seq] = time.time()
             next_send_seq += MESSAGE_SIZE
         try:
-            data, addr = sock.recvfrom(PACKET_SIZE) # Try to receive an ack within timeout, otherwise 
+            data, addr = sock.recvfrom(PACKET_SIZE) # Try to receive an ack within 200ms, otherwise check for timeouts
             ack_id = int.from_bytes(data[:4], byteorder="big")
 
             if ack_id > last_ack_seq:
@@ -58,7 +56,6 @@ def solve():
                 last_ack_seq = ack_id
         except socket.timeout: 
             pass
-
 
         # For every packet in current window, check if it
         # has been in flight for longer than TIMEOUT.
@@ -97,7 +94,7 @@ def solve():
         
     # print results
     throughput, per_pkt_delay = len(contents) / (end - start), sum(packet_delays) / len(packet_delays)
-    final_score = 0.3*throughput/1000 + 0.7/per_pkt_delay
+    final_score = 0.3*throughput/1000 + 0.7/per_pkt_delay if per_pkt_delay > 0 else 0
     print(f"Throughput: {throughput:.7f}")
     print(f"Per Packet Delay: {per_pkt_delay:.7f}")
     print(f"Final Score: {final_score:.7f}")
