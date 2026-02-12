@@ -73,13 +73,11 @@ def solve():
 
     throughput = len(contents) / (end - start)
     perPacketDelay = sum(packetDelays) / len(packetDelays) if packetDelays else 0
-
-    print("Throughput: ", throughput)
-    print("Per Packet Delay: ", perPacketDelay)
-    print(
-        "Final Score:",
-        0.3 * (throughput / 1000) + 0.7 / perPacketDelay if perPacketDelay > 0 else 0,
-    )
+    finalScore = 0.3 * (throughput / 1000) + 0.7 / perPacketDelay if perPacketDelay > 0 else 0
+    
+    print(f"Throughput: {throughput:.7f}")
+    print(f"Per Packet Delay: {perPacketDelay:.7f}")
+    print(f"Final Score: {finalScore:.7f}")
 
 
 if __name__ == "__main__":
