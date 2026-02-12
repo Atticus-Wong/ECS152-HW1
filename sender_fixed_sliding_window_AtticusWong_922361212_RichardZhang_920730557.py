@@ -37,12 +37,7 @@ def solve():
     outstanding_packets = {} #packet id in flight -> time sent, latest send
 
 
-    dup_acks = 0
-
     num_timeouts = 0
-    num_fast_retransmits = 0
-    num_cum_dup_acks = 0
-    fast_retransmit_freq_map = defaultdict(int) #seq id -> freq
 
     while last_ack_seq < len(contents):
         while (next_send_seq - last_ack_seq) // MESSAGE_SIZE < WINDOW_SIZE and next_send_seq < len(contents):
@@ -55,39 +50,30 @@ def solve():
             outstanding_packets[next_send_seq] = time.time()
             next_send_seq += MESSAGE_SIZE
         try:
-            data, addr = sock.recvfrom(PACKET_SIZE)
+            data, addr = sock.recvfrom(PACKET_SIZE) # Try to receive an ack within timeout, otherwise 
             ack_id = int.from_bytes(data[:4], byteorder="big")
 
-            if ack_id == last_ack_seq:
-                num_cum_dup_acks += 1
-                dup_acks += 1
-
-                if dup_acks == 3:
-                    #Fast retransmit
-                    print(f"FAST RETRANSMIT {last_ack_seq // MESSAGE_SIZE}th packet")
-                    seq_bytes = last_ack_seq.to_bytes(4, byteorder="big")
-                    packet = seq_bytes + stored_data[last_ack_seq // MESSAGE_SIZE]
-                    sock.sendto(packet, ("localhost", RECEIVER_PORT))
-                    num_fast_retransmits += 1
-                    fast_retransmit_freq_map[last_ack_seq  // MESSAGE_SIZE] += 1
-                    outstanding_packets[last_ack_seq] = time.time()
-            elif ack_id > last_ack_seq:
-                dup_acks = 0
+            if ack_id > last_ack_seq:
                 # Cumulative ACK: all packets up to last_ack_seq have been acked.
                 for seq in range(last_ack_seq, ack_id, MESSAGE_SIZE):
                     ack_time[seq] = time.time()
                     del outstanding_packets[seq] # delete this packet since it is no longer in flight
                 last_ack_seq = ack_id
                 print(f"Received ACK up to {last_ack_seq//MESSAGE_SIZE}th packet")
-        except socket.timeout:
+        except socket.timeout: 
             pass
 
+        # For every packet in current window, check if it
+        # has been in flight for longer than TIMEOUT.
+        # If so, retransmit it and reset its timer
         now = time.time()
-        if last_ack_seq in outstanding_packets and now - TIMEOUT >= outstanding_packets[last_ack_seq]: # if oldest packet has exceeded timeout, selectively retransmit it
-            seq_bytes = last_ack_seq.to_bytes(4, byteorder="big")
-            packet = seq_bytes + stored_data[last_ack_seq // MESSAGE_SIZE]
-            sock.sendto(packet, ("localhost", RECEIVER_PORT))
-            outstanding_packets[last_ack_seq] = time.time() # refresh its timeout
+        for seq in range(last_ack_seq, next_send_seq, MESSAGE_SIZE):
+            if seq in outstanding_packets and now - outstanding_packets[seq] >= TIMEOUT:
+                num_timeouts += 1
+                seq_bytes = seq.to_bytes(4, byteorder="big")
+                packet = seq_bytes + stored_data[seq // MESSAGE_SIZE]
+                sock.sendto(packet, ("localhost", RECEIVER_PORT))
+                outstanding_packets[seq] = time.time() # refresh its timeout
 
     end = time.time()
     print("\nentering termination protocol")
@@ -111,12 +97,10 @@ def solve():
 
     #calculate per packet delays
     packet_delays = []
-    for packet in sent_time:
-        for ack in sorted_acks:
-            if ack > packet:
-                delay = ack_time[ack] - sent_time[packet]
-                packet_delays.append(delay)
-                break
+    for seq in sent_time:
+        if seq in ack_time:
+            packet_delays.append(ack_time[seq] - sent_time[seq])
+        
     
 
     throughput, per_pkt_delay = len(contents) / (end - start), sum(packet_delays) / len(packet_delays)
@@ -127,10 +111,6 @@ def solve():
 
     #print("\nADDITIONAL STATS:")
     #print("Number of timeouts:", num_timeouts)
-    #print("Number of cumulative duplicate acks:", num_cum_dup_acks)
-    #print("Number of fast retransmits:", num_fast_retransmits)
-    #if fast_retransmit_freq_map:
-    #    print("Frequency map of fast retransmits:", fast_retransmit_freq_map)
 
 
 if __name__ == "__main__":
