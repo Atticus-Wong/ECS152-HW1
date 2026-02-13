@@ -1,7 +1,5 @@
 import time
 import socket
-from collections import defaultdict
-
 
 HOST = "127.0.0.1"
 
@@ -13,9 +11,10 @@ MESSAGE_SIZE = 1020
 SEQ_ID_SIZE = 4
 
 WINDOW_SIZE = 100
+TIMEOUT = 3
 
 def open_file():
-    with open('starter/docker/file.mp3', 'rb') as f:
+    with open("starter/docker/file.mp3", "rb") as f:
         contents = f.read()
         return contents
 
@@ -27,69 +26,50 @@ def solve():
     start = time.time() # throughput timer
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("localhost", SENDER_PORT))
-    sock.settimeout(1)
+    sock.settimeout(0.2) # The polling interval for detecting timeouts. Packet timeouts are determined with outstanding_packets dict
 
     next_send_seq = 0
     last_ack_seq = 0
-    received_acks = {} #ack -> time received
-    sent_packets = {} #packet -> time received
-
-    dup_acks = 0
-
-    num_timeouts = 0
-    num_fast_retransmits = 0
-    num_cum_dup_acks = 0
-    fast_retransmit_freq_map = defaultdict(int) #seq id -> freq
+    ack_time = {} #ack -> time received
+    sent_time = {} #packet id -> time sent, only first send
+    outstanding_packets = {} #packet id in flight -> time sent, latest send
 
     while last_ack_seq < len(contents):
         while (next_send_seq - last_ack_seq) // MESSAGE_SIZE < WINDOW_SIZE and next_send_seq < len(contents):
-            seq_id = next_send_seq.to_bytes(4, byteorder='big')
-            packet = seq_id + stored_data[next_send_seq // MESSAGE_SIZE]
+            # Send as many packets as the window allows
+            seq_bytes = next_send_seq.to_bytes(4, byteorder="big")
+            packet = seq_bytes + stored_data[next_send_seq // MESSAGE_SIZE]
             sock.sendto(packet, ("localhost", RECEIVER_PORT))
-            #print(f"Sent {next_send_seq//MESSAGE_SIZE}th packet")
-            if next_send_seq not in sent_packets:
-                sent_packets[next_send_seq] = time.time()
+            if next_send_seq not in sent_time:
+                sent_time[next_send_seq] = time.time()
+            outstanding_packets[next_send_seq] = time.time()
             next_send_seq += MESSAGE_SIZE
         try:
-            data, addr = sock.recvfrom(PACKET_SIZE)
-            ack_id = int.from_bytes(data[:4], byteorder='big')
-            if ack_id not in received_acks:
-                received_acks[ack_id] = time.time()
+            data, addr = sock.recvfrom(PACKET_SIZE) # Try to receive an ack within 200ms, otherwise check for timeouts
+            ack_id = int.from_bytes(data[:4], byteorder="big")
 
-            if ack_id == last_ack_seq:
-                num_cum_dup_acks += 1
-                dup_acks += 1
-
-                if dup_acks == 3:
-                    #Fast retransmit
-                    #print(f"FAST RETRANSMIT {last_ack_seq // MESSAGE_SIZE}th packet")
-                    seq_id = last_ack_seq.to_bytes(4, byteorder='big')
-                    packet = seq_id + stored_data[last_ack_seq // MESSAGE_SIZE]
-                    sock.sendto(packet, ("localhost", RECEIVER_PORT))
-                    num_fast_retransmits += 1
-                    fast_retransmit_freq_map[last_ack_seq  // MESSAGE_SIZE] += 1
-            elif ack_id > last_ack_seq:
-                dup_acks = 0
-                # Cumulative ACK: receiver advanced past expected, advance window
+            if ack_id > last_ack_seq:
+                # Cumulative ACK: all packets up to last_ack_seq have been acked.
+                for seq in range(last_ack_seq, ack_id, MESSAGE_SIZE):
+                    ack_time[seq] = time.time()
+                    del outstanding_packets[seq] # delete this packet since it is no longer in flight
                 last_ack_seq = ack_id
-                #print(f"Received ACK up to {last_ack_seq//MESSAGE_SIZE}th packet")
-        except socket.timeout:
-            dup_acks = 0
-            num_timeouts += 1
-            #print("TIMEOUT. Going back N")
+        except socket.timeout: 
+            pass
 
-            for seq in range(last_ack_seq, min(last_ack_seq + (WINDOW_SIZE * MESSAGE_SIZE), len(contents)), MESSAGE_SIZE):
-                seq_id = seq.to_bytes(4, byteorder="big")
-                packet = seq_id + stored_data[seq // MESSAGE_SIZE]
+        # For every packet in current window, check if it
+        # has been in flight for longer than TIMEOUT.
+        # If so, retransmit it and reset its timer
+        now = time.time()
+        for seq in range(last_ack_seq, next_send_seq, MESSAGE_SIZE):
+            if seq in outstanding_packets and now - outstanding_packets[seq] >= TIMEOUT:
+                seq_bytes = seq.to_bytes(4, byteorder="big")
+                packet = seq_bytes + stored_data[seq // MESSAGE_SIZE]
                 sock.sendto(packet, ("localhost", RECEIVER_PORT))
-                #print(f"Sent {seq//MESSAGE_SIZE}th packet (after timeout)")
-            
-            next_send_seq = min(last_ack_seq + (WINDOW_SIZE * MESSAGE_SIZE), len(contents))
+                outstanding_packets[seq] = time.time() # refresh its timeout
 
-
-
+    # End the connection by sending an empty message, receive fin, and send finack
     end = time.time()
-    print("\nentering termination protocol")
     empty_message = last_ack_seq.to_bytes(4, byteorder="big")
     sock.sendto(empty_message, ("localhost", RECEIVER_PORT))
 
@@ -106,30 +86,18 @@ def solve():
     sock.sendto(finack, ("localhost", RECEIVER_PORT))
     sock.close()
 
-    sorted_acks = sorted(list(received_acks.keys()))
-
     #calculate per packet delays
     packet_delays = []
-    for packet in sent_packets:
-        for ack in sorted_acks:
-            if ack > packet:
-                delay = received_acks[ack] - sent_packets[packet]
-                packet_delays.append(delay)
-                break
-    
-
+    for seq in sent_time:
+        if seq in ack_time:
+            packet_delays.append(ack_time[seq] - sent_time[seq])
+        
+    # print results
     throughput, per_pkt_delay = len(contents) / (end - start), sum(packet_delays) / len(packet_delays)
-    print("Throughput: ", throughput)
-    print("Per Packet Delay: ", per_pkt_delay)
-    print("Final Score:", 0.3*throughput/1000 + 0.7/per_pkt_delay)
-
-
-    #print("\nADDITIONAL STATS:")
-    #print("Number of timeouts:", num_timeouts)
-    #print("Number of cumulative duplicate acks:", num_cum_dup_acks)
-    #print("Number of fast retransmits:", num_fast_retransmits)
-    #if fast_retransmit_freq_map:
-    #    print("Frequency map of fast retransmits:", fast_retransmit_freq_map)
+    final_score = 0.3*throughput/1000 + 0.7/per_pkt_delay if per_pkt_delay > 0 else 0
+    print(f"Throughput: {throughput:.7f}")
+    print(f"Per Packet Delay: {per_pkt_delay:.7f}")
+    print(f"Final Score: {final_score:.7f}")
 
 
 if __name__ == "__main__":
